@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -11,18 +12,25 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// URLRepository defines the behavior the Server needs from the database.
+type URLRepository interface {
+	CreateURL(ctx context.Context, arg db.CreateURLParams) (db.Url, error)
+	GetURL(ctx context.Context, shortKey string) (db.Url, error)
+	IncrementClick(ctx context.Context, id int64) error
+}
+
 type Server struct {
-	Queries *db.Queries
-	Pool    *pgxpool.Pool
-	Logger  *slog.Logger
-	WG      sync.WaitGroup
+	DB     URLRepository
+	Pool   *pgxpool.Pool
+	Logger *slog.Logger
+	WG     sync.WaitGroup
 }
 
 func NewServer(pool *pgxpool.Pool, logger *slog.Logger) *Server {
 	return &Server{
-		Queries: db.New(pool),
-		Pool:    pool,
-		Logger:  logger,
+		DB:     db.New(pool),
+		Pool:   pool,
+		Logger: logger,
 	}
 }
 

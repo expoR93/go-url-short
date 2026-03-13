@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/expoR93/go-url-short/internal/base62"
 	"github.com/expoR93/go-url-short/internal/db"
@@ -25,7 +26,7 @@ func (s *Server) HandleShorten(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start a transaction using pgx
+	/*// Start a transaction using pgx
 	tx, err := s.Pool.Begin(r.Context())
 	if err != nil {
 		http.Error(w, "Failed to start transaction", http.StatusInternalServerError)
@@ -60,7 +61,20 @@ func (s *Server) HandleShorten(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to commit transaction", http.StatusInternalServerError)
 		return
 	}
+	*/
 
+	shortKey := base62.Encode(time.Now().UnixNano()) // Simplified for this example
+
+	_, err := s.DB.CreateURL(r.Context(), db.CreateURLParams{
+		OriginalUrl: req.URL,
+		ShortKey:    shortKey,
+	})
+	if err != nil {
+		s.Logger.Error("database error", "error", err)
+		http.Error(w, "Failed to save to database", http.StatusInternalServerError)
+		return
+	}
+	
 	// Respond to client
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ShortenResponse{ShortURL: shortKey})
@@ -73,7 +87,7 @@ func (s *Server) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	urlEntry, err := s.Queries.GetURL(r.Context(), shortKey)
+	urlEntry, err := s.DB.GetURL(r.Context(), shortKey)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -83,13 +97,14 @@ func (s *Server) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	s.WG.Add(1)
 	go func(id int64) {
 		defer s.WG.Done()
-		err := s.Queries.IncrementClick(context.Background(), id)
+		/*err := s.Queries.IncrementClick(context.Background(), id)
 		if err != nil {
 			s.Logger.Error("failed to increment click",
 				"url_id", id,
 				"error", err,
 			)
-		}
+		}*/
+		_ = s.DB.IncrementClick(context.Background(), id)
 	}(urlEntry.ID)
 
 	http.Redirect(w, r, urlEntry.OriginalUrl, http.StatusFound)
@@ -102,7 +117,7 @@ func (s *Server) HandleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	urlEntry, err := s.Queries.GetURL(context.Background(), shortKey)
+	urlEntry, err := s.DB.GetURL(r.Context(), shortKey)
 	if err != nil {
 		http.Error(w, "URL not found", http.StatusNotFound)
 		return
