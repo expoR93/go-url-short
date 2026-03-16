@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/sony/sonyflake"
 )
 
 // URLRepository defines the behavior the Server needs from the database.
@@ -24,13 +25,20 @@ type Server struct {
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
 	WG     sync.WaitGroup
+	Flake  *sonyflake.Sonyflake
 }
 
 func NewServer(pool *pgxpool.Pool, logger *slog.Logger) *Server {
+	flake, err := sonyflake.New(sonyflake.Settings{})
+	if err != nil {
+		logger.Error("could not initialize sonyflake ID generator")
+	}
+
 	return &Server{
 		DB:     db.New(pool),
 		Pool:   pool,
 		Logger: logger,
+		Flake:  flake,
 	}
 }
 

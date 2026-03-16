@@ -13,6 +13,7 @@ import (
 
 	"github.com/expoR93/go-url-short/internal/db"
 	"github.com/go-chi/chi/v5"
+	"github.com/sony/sonyflake"
 )
 
 type MockDB struct {
@@ -37,21 +38,33 @@ func TestHandleShorten_Unified(t *testing.T) {
 		inputBody      interface{}
 		mockErr        error
 		expectedStatus int
+		expectedErr    string
 	}{
-		{name: "Valid HTTPS", inputBody: ShortenRequest{URL: "https://google.com"}, expectedStatus: http.StatusOK},
-		{name: "IP Address", inputBody: ShortenRequest{URL: "http://192.168.1.1"}, expectedStatus: http.StatusOK},
-		{name: "Malformed JSON", inputBody: "{ bad }", expectedStatus: http.StatusBadRequest},
-		{name: "DB Error", inputBody: ShortenRequest{URL: "https://x.com"}, mockErr: errors.New("fail"), expectedStatus: http.StatusInternalServerError},
+		{name: "Valid HTTPS", inputBody: ShortenRequest{URL: "https://google.com"}, expectedStatus: http.StatusCreated},
+		{name: "IP Address", inputBody: ShortenRequest{URL: "http://192.168.1.1"}, expectedStatus: http.StatusCreated},
+		{name: "Malformed JSON", inputBody: "{ bad }", expectedStatus: http.StatusBadRequest, expectedErr: "Invalid request payload"},
+		{name: "DB Error", inputBody: ShortenRequest{URL: "https://x.com"}, mockErr: errors.New("fail"), expectedStatus: http.StatusInternalServerError, expectedErr: "Failed to save URL"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mock := &MockDB{
 				OnCreate: func(arg db.CreateURLParams) (db.Url, error) {
-					return db.Url{ShortKey: "abc"}, tt.mockErr
+					return db.Url{ShortKey: arg.ShortKey}, tt.mockErr
 				},
 			}
-			srv := &Server{DB: mock, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+			// Initialize Sonyflake to prevent a nil pointer panic
+			flake, err := sonyflake.New(sonyflake.Settings{})
+			if err != nil {
+				t.Fatal("could not initialize sonyflake for test")
+			}
+
+			srv := &Server{
+				DB:     mock,
+				Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+				Flake:  flake, // Inject the generator
+			}
 
 			var body []byte
 			if s, ok := tt.inputBody.(string); ok {
@@ -66,6 +79,18 @@ func TestHandleShorten_Unified(t *testing.T) {
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("got %d, want %d", w.Code, tt.expectedStatus)
+			}
+
+			// Verify JSON error message if status is not OK
+			if tt.expectedStatus != http.StatusOK && tt.expectedStatus != http.StatusCreated {
+				var resp map[string]string
+				if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+					t.Fatalf("Failed to decode error response: %v", err)
+				}
+
+				if resp["error"] != tt.expectedErr {
+					t.Errorf("got error message %q, expected %q", resp["error"], tt.expectedErr)
+				}
 			}
 		})
 	}
@@ -125,7 +150,6 @@ func TestHandleRedirect(t *testing.T) {
 	}
 }
 
-// Add this to your handlers_test.go to cover the stats endpoint
 func TestHandleStats(t *testing.T) {
 	mock := &MockDB{
 		OnGet: func(key string) (db.Url, error) {
