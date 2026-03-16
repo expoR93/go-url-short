@@ -1,6 +1,6 @@
 -- name: CreateURL :one
-INSERT INTO urls(original_url, short_key)
-VALUES($1,$2)
+INSERT INTO urls (id, short_key, original_url)
+VALUES ($1, $2, $3)
 RETURNING *;
 
 -- name: GetURL :one

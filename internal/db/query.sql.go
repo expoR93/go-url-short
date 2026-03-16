@@ -10,18 +10,19 @@ import (
 )
 
 const createURL = `-- name: CreateURL :one
-INSERT INTO urls(original_url, short_key)
-VALUES($1,$2)
+INSERT INTO urls (id, short_key, original_url)
+VALUES ($1, $2, $3)
 RETURNING id, original_url, short_key, clicks, created_at
 `
 
 type CreateURLParams struct {
-	OriginalUrl string `json:"original_url"`
+	ID          int64  `json:"id"`
 	ShortKey    string `json:"short_key"`
+	OriginalUrl string `json:"original_url"`
 }
 
 func (q *Queries) CreateURL(ctx context.Context, arg CreateURLParams) (Url, error) {
-	row := q.db.QueryRow(ctx, createURL, arg.OriginalUrl, arg.ShortKey)
+	row := q.db.QueryRow(ctx, createURL, arg.ID, arg.ShortKey, arg.OriginalUrl)
 	var i Url
 	err := row.Scan(
 		&i.ID,
