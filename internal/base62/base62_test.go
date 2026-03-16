@@ -1,26 +1,29 @@
 package base62
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestEncode(t *testing.T) {
 	testCases := []struct {
 		name     string
-		input    int64
+		input    uint64
 		expected string
 	}{
-		{"Zero Value", 0, "0"},                            // Smallest boundary
-		{"Single Digit", 10, "a"},                         // Tenth char in alphabet
-		{"Alphabet Boundary", 61, "Z"},                    // Last char in alphabet
-		{"Two Digit Result", 62, "10"},                    // First wrap-around (62nd index)
-		{"Large ID", 123456789, "8m0Kx"},                  // Typical database ID scale
-		{"Max Int64", 9223372036854775807, "aZl8N0y58M7"}, // Stress testing capacity
+		{"Zero Value", 0, "0"},                        // Smallest boundary
+		{"Single Digit", 10, "A"},                     // Tenth char in alphabet
+		{"Alphabet Boundary", 61, "z"},                // Last char in alphabet
+		{"Two Digit Result", 62, "10"},                // First wrap-around (62nd index)
+		{"Large ID", 123456789, "8M0kX"},              // Typical database ID scale
+		{"Max Uint64", math.MaxUint64, "LygHa16AHYF"}, // Stress testing capacity
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Encode(tc.input)
 			if got != tc.expected {
-				t.Errorf("Encode(%d) = %v; want %v", tc.input, got, tc.expected)
+				t.Errorf("Encode(%d) = %v; expected %v", tc.input, got, tc.expected)
 			}
 		})
 	}
@@ -44,7 +47,7 @@ func TestDecodeErrors(t *testing.T) {
 				t.Errorf("Decode(%s) expected error for invalid character, but got nil", tc.input)
 			}
 
-			if err != nil && err.Error() != "Invalid character!" {
+			if err != nil && err.Error() != "Invalid character" {
 				t.Errorf("Unexpected error message: %v", err)
 			}
 		})
@@ -54,7 +57,8 @@ func TestDecodeErrors(t *testing.T) {
 // TestIdentityProperty is a "Round-trip" test. It ensures that if we encode then decode,
 // we get exactly what we started with.
 func TestIdentityProperty(t *testing.T) {
-	values := []int64{1, 55, 1024, 999999, 4503599627370496}
+	// Mixed range of values to ensure round-trip consistency
+	values := []uint64{1, 55, 1024, 999999, 4503599627370496, math.MaxUint64}
 
 	for _, val := range values {
 		encoded := Encode(val)
@@ -73,12 +77,12 @@ func BenchmarkEncode(b *testing.B) {
 	// b.N is adjusted by the Go runtime until the benchmark
 	// results are statistically significant.
 	for i := 0; i < b.N; i++ {
-		Encode(9223372036854775807) // Test with Max Int64
+		Encode(math.MaxUint64)
 	}
 }
 
 func BenchmarkDecode(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_, _ = Decode("AzL8n0Y58m7")
+		_, _ = Decode("Lyg78DxNoYJ")
 	}
 }
