@@ -51,11 +51,20 @@ func (s *Server) HandleShorten(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	shortKey := chi.URLParam(r, "key")
+	ctx := r.Context()
 	if shortKey == "" {
 		http.Error(w, "Key is required", http.StatusBadRequest)
 		return
 	}
 
+	// Check Redis cache
+	originalUrl, err := s.Cache.Get(ctx, shortKey)
+	if err == nil {
+		http.Redirect(w, r, originalUrl, http.StatusFound)
+		return
+	}
+
+	// Cache Miss: Check PostgreSQL​
 	urlEntry, err := s.DB.GetURL(r.Context(), shortKey)
 	if err != nil {
 		http.NotFound(w, r)
