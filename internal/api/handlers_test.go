@@ -16,6 +16,27 @@ import (
 	"github.com/sony/sonyflake"
 )
 
+type MockCache struct {
+	OnGet func(key string) (string, error)
+	OnSet func(key string, value string) error
+}
+
+func (m *MockCache) Get(ctx context.Context, key string) (string, error) {
+	if m.OnGet != nil {
+		return m.OnGet(key)
+	}
+
+	return "", errors.New("cache miss")
+}
+
+func (m *MockCache) Set(ctx context.Context, key string, value string) error {
+	if m.OnSet != nil {
+		return m.OnSet(key, value)
+	}
+
+	return nil
+}
+
 type MockDB struct {
 	OnCreate    func(arg db.CreateURLParams) (db.Url, error)
 	OnGet       func(key string) (db.Url, error)
@@ -48,6 +69,18 @@ func TestHandleShorten_Unified(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			cacheCalled := false
+			var capturedKey, capturedValue string
+
+			mockCache := &MockCache{
+				OnSet: func(key string, value string) error {
+					capturedKey = key
+					capturedValue = value
+					cacheCalled = true
+					return nil
+				},
+			}
+
 			mock := &MockDB{
 				OnCreate: func(arg db.CreateURLParams) (db.Url, error) {
 					return db.Url{ShortKey: arg.ShortKey}, tt.mockErr
@@ -62,6 +95,7 @@ func TestHandleShorten_Unified(t *testing.T) {
 
 			srv := &Server{
 				DB:     mock,
+				Cache:  mockCache,
 				Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 				Flake:  flake, // Inject the generator
 			}
@@ -76,6 +110,21 @@ func TestHandleShorten_Unified(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/shorten", bytes.NewBuffer(body))
 			w := httptest.NewRecorder()
 			srv.HandleShorten(w, req)
+
+			if tt.expectedStatus == http.StatusCreated {
+				if !cacheCalled {
+					t.Errorf("%s: expected cache to be updated on success, but it wasn't", tt.name)
+				}
+				// Check if the key exists (is not empty)
+				if capturedKey == "" {
+					t.Error("expected shortKey to be sent to cache, but it was empty")
+				}
+				// Check if the value matches the original URL from the input
+				input := tt.inputBody.(ShortenRequest)
+				if capturedValue != input.URL {
+					t.Errorf("cache received wrong URL: got %s, want %s", capturedValue, input.URL)
+				}
+			}
 
 			if w.Code != tt.expectedStatus {
 				t.Errorf("got %d, want %d", w.Code, tt.expectedStatus)
@@ -100,34 +149,76 @@ func TestHandleRedirect(t *testing.T) {
 	tests := []struct {
 		name           string
 		urlKey         string
+		cacheHit       bool
 		expectedStatus int
 	}{
 		{
+			name:           "Cache Hit Redirect",
+			urlKey:         "cached-key",
+			cacheHit:       true,
+			expectedStatus: http.StatusFound,
+		},
+		{
+			name:           "Cache Miss - DB Hit",
+			urlKey:         "cached-key",
+			cacheHit:       false,
+			expectedStatus: http.StatusFound,
+		},
+		{
 			name:           "Successful Redirect",
 			urlKey:         "found",
+			cacheHit:       false,
 			expectedStatus: http.StatusFound, // 302
 		},
 		{
 			name:           "Key Not Found",
 			urlKey:         "missing-key",
+			cacheHit:       false,
 			expectedStatus: http.StatusNotFound, // 404
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Setup Mock
-			mock := &MockDB{
-				OnGet: func(key string) (db.Url, error) {
-					if key == "found" {
-						return db.Url{ID: 1, OriginalUrl: "https://google.com"}, nil
+			var setKey, setVal string
+
+			// Setup MockCache
+			mockCache := &MockCache{
+				OnGet: func(key string) (string, error) {
+					if tt.cacheHit {
+						return "https://google.com", nil
 					}
-					return db.Url{}, errors.New("not found")
+					return "", errors.New("redis: nil")
+				},
+				OnSet: func(key string, value string) error {
+					setKey = key
+					setVal = value
+					return nil
+				},
+			}
+
+			// Setup MockDB
+			mockDB := &MockDB{
+				OnGet: func(key string) (db.Url, error) {
+					// If the key is "missing-key", explicitly return an error
+					if key == "missing-key" {
+						return db.Url{}, errors.New("not found")
+					}
+
+					return db.Url{
+						ID:          1,
+						OriginalUrl: "https://google.com",
+						ShortKey:    key,
+					}, nil
+				},
+				OnIncrement: func(id int64) error {
+					return nil
 				},
 			}
 
 			srv := &Server{
-				DB:     mock,
+				DB:     mockDB,
+				Cache:  mockCache,
 				Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			}
 
@@ -142,9 +233,20 @@ func TestHandleRedirect(t *testing.T) {
 			// 2. Execute
 			srv.HandleRedirect(w, req)
 
+			srv.WG.Wait()
+
 			// 3. Assert
 			if w.Code != tt.expectedStatus {
 				t.Errorf("%s: expected %d, got %d", tt.name, tt.expectedStatus, w.Code)
+			}
+			if !tt.cacheHit && tt.expectedStatus == http.StatusFound {
+				if setKey != tt.urlKey {
+					t.Errorf("expected cache to be filled with %s, but got %s", tt.urlKey, setKey)
+				}
+				expectedURL := "https://google.com"
+				if setVal != expectedURL {
+					t.Errorf("%s: expected cache value %s, got %s", tt.name, expectedURL, setVal)
+				}
 			}
 		})
 	}
