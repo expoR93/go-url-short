@@ -46,21 +46,39 @@ func (s *Server) HandleShorten(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_ = s.Cache.Set(r.Context(), shortKey, req.URL)
+
 	s.respondWithJSON(w, http.StatusCreated, url)
 }
 
 func (s *Server) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	shortKey := chi.URLParam(r, "key")
+	ctx := r.Context()
 	if shortKey == "" {
 		http.Error(w, "Key is required", http.StatusBadRequest)
 		return
 	}
 
+	// Check Redis cache
+	originalUrl, err := s.Cache.Get(ctx, shortKey)
+	if err == nil && originalUrl != "" {
+		http.Redirect(w, r, originalUrl, http.StatusFound)
+		return
+	}
+
+	// Cache Miss: Check PostgreSQL​
 	urlEntry, err := s.DB.GetURL(r.Context(), shortKey)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
+
+	// Update the cache so the NEXT person gets a hit
+	s.WG.Add(1)
+	go func(key, val string) {
+		defer s.WG.Done()
+		_ = s.Cache.Set(context.Background(), key, val)
+	}(shortKey, urlEntry.OriginalUrl)
 
 	// Background click increment
 	s.WG.Add(1)
