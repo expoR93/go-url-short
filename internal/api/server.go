@@ -20,8 +20,14 @@ type URLRepository interface {
 	IncrementClick(ctx context.Context, id int64) error
 }
 
+type CacheRepository interface {
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key string, value string) error
+}
+
 type Server struct {
 	DB     URLRepository
+	Cache CacheRepository
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
 	WG     sync.WaitGroup
