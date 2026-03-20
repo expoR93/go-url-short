@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
+	"github.com/expoR93/go-url-short/internal/cache"
 	"github.com/expoR93/go-url-short/internal/db"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -27,7 +29,7 @@ type CacheRepository interface {
 
 type Server struct {
 	DB     URLRepository
-	Cache CacheRepository
+	Cache  CacheRepository
 	Pool   *pgxpool.Pool
 	Logger *slog.Logger
 	WG     sync.WaitGroup
@@ -40,8 +42,11 @@ func NewServer(pool *pgxpool.Pool, logger *slog.Logger) *Server {
 		logger.Error("could not initialize sonyflake ID generator")
 	}
 
+	cacheStore := cache.NewRedisStore("localhost:6379", "", 0, 24*time.Hour)
+
 	return &Server{
 		DB:     db.New(pool),
+		Cache:  cacheStore,
 		Pool:   pool,
 		Logger: logger,
 		Flake:  flake,
