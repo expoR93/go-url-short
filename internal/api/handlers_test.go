@@ -18,8 +18,8 @@ import (
 )
 
 type MockCache struct {
-	OnGet func(key string) (string, error)
-	OnSet func(key string, value string) error
+	OnGet  func(key string) (string, error)
+	OnSet  func(key string, value string) error
 	OnIncr func(key string, ttl time.Duration) (int64, error)
 }
 
@@ -280,5 +280,55 @@ func TestHandleStats(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d", w.Code)
+	}
+}
+
+func TestRateLimitMiddleware(t *testing.T) {
+	tests := []struct {
+		name           string
+		mockCount      int64
+		expectedStatus int
+	}{
+		{
+			name:           "Under Limit",
+			mockCount:      10,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Over Limit",
+			mockCount:      61,
+			expectedStatus: http.StatusTooManyRequests,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockCache := &MockCache{
+				OnIncr: func(key string, ttl time.Duration) (int64, error) {
+					return tt.mockCount, nil
+				},
+			}
+
+			srv := &Server{
+				Cache:  mockCache,
+				Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+
+			// Dummy handler to wrap with middleware
+			nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/", nil)
+			req.RemoteAddr = "127.0.0.1:1234"
+			w := httptest.NewRecorder()
+
+			// Execute the middleware
+			srv.RateLimitMiddleware(nextHandler).ServeHTTP(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("%s: expected status %d, got %d", tt.name, tt.expectedStatus, w.Code)
+			}
+		})
 	}
 }
