@@ -1,0 +1,33 @@
+# Local binaries and build artifacts
+bin/
+main
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Dependency folders (downloaded inside Docker via go mod)
+vendor/
+
+# Environment secrets (Docker Compose handles these via the environment block)
+.env
+*.local
+
+# Git metadata
+.git
+.gitignore
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker specific
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# OS specific
+.DS_Store
+Thumbs.db
