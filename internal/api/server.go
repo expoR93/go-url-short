@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -42,7 +44,23 @@ func NewServer(pool *pgxpool.Pool, logger *slog.Logger) *Server {
 		logger.Error("could not initialize sonyflake ID generator")
 	}
 
-	cacheStore := cache.NewRedisStore("localhost:6379", "", 0, 24*time.Hour)
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379" // Default fallback
+		logger.Info("REDIS_ADDR not set, falling back to default", "addr", redisAddr)
+	}
+
+	redisPass := os.Getenv("REDIS_PASS")
+
+	redisDBStr := os.Getenv("REDIS_DB")
+	redisDB := 0 // Default to DB 0
+	if redisDBStr != "" {
+		if val, err := strconv.Atoi(redisDBStr); err == nil {
+			redisDB = val
+		}
+	}
+
+	cacheStore := cache.NewRedisStore(redisAddr, redisPass, redisDB, 24*time.Hour)
 
 	return &Server{
 		DB:     db.New(pool),
