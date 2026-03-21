@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/expoR93/go-url-short/internal/db"
 	"github.com/go-chi/chi/v5"
@@ -19,6 +20,7 @@ import (
 type MockCache struct {
 	OnGet func(key string) (string, error)
 	OnSet func(key string, value string) error
+	OnIncr func(key string, ttl time.Duration) (int64, error)
 }
 
 func (m *MockCache) Get(ctx context.Context, key string) (string, error) {
@@ -35,6 +37,13 @@ func (m *MockCache) Set(ctx context.Context, key string, value string) error {
 	}
 
 	return nil
+}
+
+func (m *MockCache) Incr(ctx context.Context, key string, ttl time.Duration) (int64, error) {
+	if m.OnIncr != nil {
+		return m.OnIncr(key, ttl)
+	}
+	return 1, nil
 }
 
 type MockDB struct {

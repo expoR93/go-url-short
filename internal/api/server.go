@@ -27,6 +27,7 @@ type URLRepository interface {
 type CacheRepository interface {
 	Get(ctx context.Context, key string) (string, error)
 	Set(ctx context.Context, key string, value string) error
+	Incr(ctx context.Context, key string, ttl time.Duration) (int64, error)
 }
 
 type Server struct {
@@ -78,6 +79,7 @@ func (s *Server) Routes() http.Handler {
 	r.Use(middleware.Logger)    // Log every request to the terminal
 	r.Use(middleware.Recoverer) // If a handler panics, don't crash the server
 	r.Use(middleware.RealIP)    // Useful for tracking actual user IPs in stats later​
+	r.Use(s.RateLimitMiddleware)
 
 	// --- Routes ---​
 	r.Post("/shorten", s.HandleShorten)
@@ -85,4 +87,30 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/stats/{key}", s.HandleStats)
 
 	return r
+}
+
+// RateLimitMiddleware restricts requests based on IP address using the Redis cache.
+func (s *Server) RateLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		key := "rate_limit:" + r.RemoteAddr
+
+		// Atomic increment with a 1-minute window
+		count, err := s.Cache.Incr(ctx, key, time.Minute)
+		if err != nil {
+			s.Logger.Error("cache error in rate limiter", "error", err)
+			next.ServeHTTP(w, r) // Fail open to not block users if Redis is down
+			return
+		}
+
+		if count > 60 {
+			s.Logger.Warn("rate limit exceeded", "ip", r.RemoteAddr, "count", count)
+			w.Header().Set("X-RateLimit-Limit", "60")
+			w.Header().Set("Retry-After", "60")
+			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
